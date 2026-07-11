@@ -150,7 +150,7 @@ Create a `.env` file in the root directory:
 GEMINI_API_KEY=your_google_gemini_api_key_here
 
 # Target Model Identifier (Optional, defaults to gemini-2.5-flash)
-GEMINI_MODEL=gemini-2.5-flash
+GEMINI_MODEL=gemini-3.5-flash
 ```
 
 ### How to Run

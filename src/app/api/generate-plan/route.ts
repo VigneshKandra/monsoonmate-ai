@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const modelName = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+    const modelName = process.env.GEMINI_MODEL || "gemini-3.5-flash";
     const ai = new GoogleGenAI({ apiKey });
 
     const prompt = buildPreparednessPrompt(userProfile);
