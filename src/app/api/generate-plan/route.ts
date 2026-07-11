@@ -183,7 +183,7 @@ function classifyError(message: string): { code: string; status: number; userMes
   if (message.includes("quota") || message.includes("RESOURCE_EXHAUSTED") || message.includes("429")) {
     return { code: "QUOTA_EXCEEDED", status: 429, userMessage: "Service limit exceeded. Please wait a minute and retry." };
   }
-  if (message.includes("model") && (message.includes("not found") || message.includes("not available"))) {
+  if (message.includes("not found") || message.includes("NOT_FOUND") || message.includes("no longer available") || message.includes("not available")) {
     return { code: "MODEL_UNAVAILABLE", status: 503, userMessage: "The AI model is temporarily unavailable. Please retry." };
   }
   if (message.includes("overloaded") || message.includes("503")) {
@@ -227,7 +227,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const modelName = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+    const modelName = process.env.GEMINI_MODEL || "gemini-2.0-flash";
     console.log(`[route] Model: ${modelName}`);
 
     const ai = new GoogleGenAI({ apiKey });
@@ -307,7 +307,7 @@ export async function POST(req: NextRequest) {
         },
         temperature: 0.1,
         topP: 0.8,
-        maxOutputTokens: 2048,
+        maxOutputTokens: 8192,
       },
     });
 
