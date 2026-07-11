@@ -1,25 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
-import { PreparednessPlanResponse } from "@/types/planner";
 import { buildPreparednessPrompt } from "@/prompts/preparednessPrompt";
-
-function cleanJsonResponse(rawText: string): string {
-  let cleaned = rawText.trim();
-  
-  // Remove starting markdown code fences
-  if (cleaned.startsWith("```json")) {
-    cleaned = cleaned.substring(7);
-  } else if (cleaned.startsWith("```")) {
-    cleaned = cleaned.substring(3);
-  }
-  
-  // Remove ending markdown code fences
-  if (cleaned.endsWith("```")) {
-    cleaned = cleaned.substring(0, cleaned.length - 3);
-  }
-  
-  return cleaned.trim();
-}
 
 export async function POST(req: NextRequest) {
   try {
@@ -44,7 +25,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const modelName = process.env.GEMINI_MODEL || "gemini-3.5-flash";
+    const modelName = process.env.GEMINI_MODEL || "gemini-2.5-flash";
     const ai = new GoogleGenAI({ apiKey });
 
     const prompt = buildPreparednessPrompt(userProfile);
@@ -72,32 +53,51 @@ export async function POST(req: NextRequest) {
 
     const response = await Promise.race([apiCallPromise, timeoutPromise]);
     
+    console.log("FULL RESPONSE OBJECT");
+    console.dir(response, { depth: null });
+    
     console.timeEnd("Gemini Request");
     console.log("Gemini response received.");
     
-    const text = response.text;
-
-    console.log("========== RAW GEMINI RESPONSE ==========");
-    console.log(text);
-    console.log("=========================================");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const responseAny = response as any;
+    const text =
+      typeof responseAny.text === "function"
+        ? responseAny.text()
+        : responseAny.text;
 
     if (!text) {
-      return NextResponse.json(
-        { success: false, message: "Empty Response: The AI response returned empty." },
-        { status: 502 }
-      );
+      throw new Error("Gemini returned an empty response.");
     }
 
-    const cleanedText = cleanJsonResponse(text);
+    console.log("RAW RESPONSE");
+    console.log(text);
+
+    let cleaned = text.trim();
+    cleaned = cleaned
+      .replace(/```json/g, "")
+      .replace(/```/g, "")
+      .trim();
+
+    console.log("========== CLEANED RESPONSE ==========");
+    console.log(cleaned);
 
     try {
-      const parsedPlan: PreparednessPlanResponse = JSON.parse(cleanedText);
-      return NextResponse.json({ success: true, plan: parsedPlan });
-    } catch {
-      return NextResponse.json(
-        { success: false, message: "Parsing Error: Received an invalid plan format from the server." },
-        { status: 502 }
-      );
+       const parsed = JSON.parse(cleaned);
+       return NextResponse.json({
+          success: true,
+          plan: parsed
+       });
+    }
+    catch (error) {
+       console.error("JSON PARSE FAILED", error);
+       console.error(cleaned);
+
+       return NextResponse.json({
+          success: false,
+          message: "JSON_PARSE_ERROR",
+          raw: cleaned
+       });
     }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
