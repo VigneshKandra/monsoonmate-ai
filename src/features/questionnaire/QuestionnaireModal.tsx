@@ -8,7 +8,17 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { ArrowRight, ArrowLeft, Check } from "lucide-react";
+import { 
+  ArrowRight, 
+  ArrowLeft, 
+  Check, 
+  MapPin, 
+  CloudLightning, 
+  ListTodo, 
+  Compass, 
+  Sparkles, 
+  Activity 
+} from "lucide-react";
 
 import { generatePreparednessPlan } from "@/services/gemini";
 import { LocationData, QuestionnaireResponses } from "./types";
@@ -57,6 +67,25 @@ const getErrorDetails = (errMessage: string) => {
   };
 };
 
+const getLoadingIcon = (index: number) => {
+  switch (index) {
+    case 0:
+      return <MapPin className="size-8 text-cyan-400 animate-bounce" />;
+    case 1:
+      return <CloudLightning className="size-8 text-yellow-400 animate-pulse" />;
+    case 2:
+      return <ListTodo className="size-8 text-cyan-400 animate-pulse" />;
+    case 3:
+      return <Compass className="size-8 text-blue-400 animate-spin" style={{ animationDuration: "3s" }} />;
+    case 4:
+      return <Sparkles className="size-8 text-amber-400 animate-pulse" />;
+    case 5:
+      return <Activity className="size-8 text-emerald-400 animate-pulse" />;
+    default:
+      return <Sparkles className="size-8 text-cyan-400 animate-pulse" />;
+  }
+};
+
 interface QuestionnaireModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -70,6 +99,23 @@ export function QuestionnaireModal({ isOpen, onClose, onPlanGenerated }: Questio
   const [isLocating, setIsLocating] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [activeMessageIndex, setActiveMessageIndex] = useState(0);
+  const [progress, setProgress] = useState(0);
+
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (isGenerating) {
+      interval = setInterval(() => {
+        setProgress((prev) => {
+          if (prev >= 98) return 98;
+          const increment = prev < 50 ? 2.5 : prev < 80 ? 1.2 : 0.4;
+          return Math.min(prev + increment, 98);
+        });
+      }, 150);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [isGenerating]);
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -165,6 +211,7 @@ export function QuestionnaireModal({ isOpen, onClose, onPlanGenerated }: Questio
   };
 
   const handleGeneratePlan = async () => {
+    setProgress(0);
     setIsGenerating(true);
     setErrors((prev) => {
       const next = { ...prev };
@@ -192,19 +239,41 @@ export function QuestionnaireModal({ isOpen, onClose, onPlanGenerated }: Questio
       if (!open) onClose();
     }}>
       <DialogContent className="relative max-w-md w-[92vw] max-h-[90vh] md:max-h-[85vh] overflow-y-auto bg-slate-900 border border-slate-800 text-slate-100 p-6 sm:p-8 rounded-2xl shadow-2xl focus-visible:outline-none focus:outline-none scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent">
-        {/* Full screen loading overlay inside modal */}
+        {/* Immersive Full Screen loading overlay */}
         {isGenerating && (
-          <div className="absolute inset-0 bg-slate-950/90 backdrop-blur-md flex flex-col items-center justify-center p-6 z-50 text-center animate-in fade-in duration-200">
-            <div className="relative mb-6">
-              <div className="absolute inset-0 w-16 h-16 bg-cyan-500/20 blur-xl rounded-full animate-pulse-slow" aria-hidden="true" />
-              <div className="w-16 h-16 border-4 border-slate-800 border-t-cyan-500 rounded-full animate-spin" role="status" aria-label="Loading indicator" />
+          <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex items-center justify-center z-[100] animate-in fade-in duration-300">
+            <div className="bg-slate-900/60 border border-slate-800/80 backdrop-blur-xl p-8 rounded-2xl shadow-2xl max-w-sm w-[90vw] text-center flex flex-col items-center justify-center gap-5 animate-in zoom-in-95 duration-350">
+              
+              {/* Dynamic Icon with Ambient Pulsing Backdrop */}
+              <div className="relative w-16 h-16 flex items-center justify-center bg-slate-950/60 rounded-full border border-slate-800/60 shadow-inner">
+                <div className="absolute inset-0 w-full h-full bg-cyan-500/10 blur-md rounded-full animate-pulse" aria-hidden="true" />
+                {getLoadingIcon(activeMessageIndex)}
+              </div>
+
+              {/* Progress Messages */}
+              <div className="space-y-1.5 mt-2">
+                <h4 className="text-sm sm:text-base font-bold text-cyan-400 font-mono tracking-wider uppercase animate-pulse" aria-live="assertive">
+                  {loadingMessages[activeMessageIndex]}
+                </h4>
+                <p className="text-[10px] text-slate-450 leading-relaxed font-bold uppercase tracking-wider font-mono">
+                  Personalizing safety commands
+                </p>
+              </div>
+
+              {/* Smooth Progress Bar & Estimation percentage */}
+              <div className="w-full mt-1.5">
+                <div className="w-full bg-slate-950 h-2 rounded-full overflow-hidden border border-slate-950" role="progressbar" aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100}>
+                  <div 
+                    className="bg-gradient-to-r from-blue-500 via-cyan-500 to-emerald-500 h-full rounded-full transition-all duration-300 ease-out"
+                    style={{ width: `${progress}%` }}
+                  />
+                </div>
+                <div className="text-right text-[10px] sm:text-xs font-bold text-cyan-400/90 font-mono mt-1.5 select-none">
+                  {Math.round(progress)}% Complete
+                </div>
+              </div>
+
             </div>
-            <h4 className="text-sm sm:text-base font-bold text-cyan-400 font-mono tracking-wider animate-pulse uppercase" aria-live="assertive">
-              {loadingMessages[activeMessageIndex]}
-            </h4>
-            <p className="text-xs text-slate-400 mt-2.5 max-w-[260px] leading-relaxed font-semibold">
-              MonsoonMate AI is analyzing parameters and compiling civil readiness checklists.
-            </p>
           </div>
         )}
 

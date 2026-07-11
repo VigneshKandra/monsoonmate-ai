@@ -21,7 +21,7 @@ import {
   Printer,
   Info
 } from "lucide-react";
-
+import { downloadPlanPDF } from "@/utils/pdfGenerator";
 interface PreparednessDashboardProps {
   plan: PreparednessPlanResponse;
   onReset: () => void;
@@ -107,7 +107,16 @@ export function PreparednessDashboard({ plan, onReset }: PreparednessDashboardPr
             </h1>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => downloadPlanPDF(plan)}
+              className="border-slate-800 hover:border-slate-700 bg-slate-950 text-slate-300 hover:text-white h-9 rounded-lg gap-1.5"
+            >
+              <Briefcase className="size-4" />
+              Download PDF
+            </Button>
             <Button
               variant="outline"
               size="sm"

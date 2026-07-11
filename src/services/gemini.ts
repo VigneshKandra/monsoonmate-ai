@@ -20,70 +20,81 @@ export async function generatePreparednessPlan(userProfile: QuestionnaireRespons
   const ai = new GoogleGenAI({ apiKey });
 
   const prompt = `
-You are a senior disaster preparedness officer, emergency response planner, weather risk analyst, and public safety expert.
+You are a senior disaster preparedness officer, emergency response planner, weather risk analyst, and public safety expert with decades of experience coordinating civil defense operations.
 
-Your responsibility is to generate a personalized monsoon preparedness plan.
+Your sole objective is to compile a highly personalized, practical, and action-oriented Monsoon Preparedness Plan for the user profile provided below.
 
-The user profile is:
+<user_profile>
 ${JSON.stringify(userProfile, null, 2)}
+</user_profile>
 
-Return ONLY valid JSON.
-No markdown.
-No explanations.
-No code fences.
+<output_rules>
+- Return ONLY a raw JSON string. Do not wrap in markdown code blocks, do not write code fences (e.g. no \`\`\`json ... \`\`\`), do not write any pre-amble, explanation, or post-amble text.
+- The output must be valid, parseable JSON conforming EXACTLY to the schema provided.
+- Translate all content (recommendations, checklist items, text blocks, reasons) to the user's preferred language specified in the user profile. Do NOT translate JSON structure keys.
+</output_rules>
 
-The JSON schema must be:
+<personalization_directives>
+Analyze the user profile systematically:
+1. **Location**: Personalize safety steps based on state and city monsoon behaviors (e.g., coastal surge risks for Mumbai, drainage block risks, local river overflows).
+2. **Household Dependencies**:
+   - If 'children' in list: Add child-safety rules, toys/diaper stockpiling, school check-ins.
+   - If 'senior' in list: Add prescription medicine audits, power-outage backups for medical aids.
+   - If 'pregnant' in list: Add emergency hospital transport planning, clean delivery room prep details.
+   - If 'disabilities' in list: Add mobility aid battery checks, local emergency contact register alerts.
+   - If 'pets' in list: Add pet food, carrier bags, and identification tag checks.
+3. **House Type**:
+   - If 'apartment': Focus on window sealing, balcony drain checks, elevator safety protocols.
+   - If 'independent': Focus on roof leak audits, tree branch trimming, terrace block clears.
+   - If 'village': Focus on wall reinforcements, storm runoff ditches, roof tie-downs.
+   - If 'flood' (lowland): Prioritize sandbags, elevating ground-level electronics, clean water store elevations.
+4. **Transportation Mode**:
+   - If 'car': Focus on window hammer availability, alternate route mapping, avoiding subways.
+   - If 'bike': Focus on reflective safety coats, brake grip adjustments, high-wind steering.
+   - If 'public': Focus on train/bus transit tracking apps, rain gear, commuter warnings.
+   - If 'none': Focus on walking safety, storm surge updates, safe footpaths.
+</personalization_directives>
+
+<hallucination_prevention_directives>
+- NEVER invent current temperature, exact rainfall millimeters, or live weather forecast figures.
+- Instead, clearly declare local assumptions based on the geography (e.g., "Assuming standard high precipitation patterns during the southwest monsoon in Mumbai...").
+- Keep recommendations strictly practical and relevant to the monsoon season.
+</hallucination_prevention_directives>
+
+<json_schema>
 {
-  "riskLevel": "",
-  "riskSummary": "",
+  "riskLevel": "Low | Moderate | High | Severe",
+  "riskSummary": "A concise, geographic-specific summary explaining the risk level and stating standard monsoon assumptions.",
   "preparednessPlan": {
-    "today": [],
-    "tomorrow": [],
-    "duringRain": [],
-    "afterRain": []
+    "today": ["List of 3-5 immediate critical actions to secure safety today"],
+    "tomorrow": ["List of 3-5 structural and logistical items to execute tomorrow"],
+    "duringRain": ["List of 3-5 emergency safety actions to follow while it is raining heavily"],
+    "afterRain": ["List of 3-5 recovery and wellness steps to run after the storm passes (drainage checks, vector safety)"]
   },
-  "emergencyChecklist": [],
-  "emergencyKit": [],
+  "emergencyChecklist": ["3-5 customized safety checkpoints matching the household dependents, house structure, and language"],
+  "emergencyKit": ["4-6 critical provisions to pack in a waterproof bag, customized for their situation (medical supplies for seniors, child needs, pet food, etc.)"],
   "travelAdvisory": {
-    "status": "",
-    "recommendation": "",
-    "avoid": [],
-    "safeOptions": []
+    "status": "Safe | Advisory | Danger",
+    "recommendation": "A detailed travel advisory message matching their transportation mode and location details.",
+    "avoid": ["List of 2-3 situations/areas to avoid based on transportation mode"],
+    "safeOptions": ["List of 2-3 safe transit options or actions to take"]
   },
   "safetyTips": {
-    "before": [],
-    "during": [],
-    "after": []
+    "before": ["3 customized tips for preparation phase"],
+    "during": ["3 customized tips for safety in storm"],
+    "after": ["3 customized safety tips post-storm"]
   },
-  "communityRecommendations": [],
+  "communityRecommendations": ["2-3 actions to coordinate with neighbors (drainage clearing, contact sharing, checking on vulnerable elders)"],
   "emergencyContacts": [
     {
-      "name": "",
-      "reason": ""
+      "name": "Specific local helpline or response contact names (e.g., Mumbai Disaster Control, National Emergency Line, local fire force)",
+      "reason": "Why the user should dial this number (e.g., for reporting waterlogging, rescue support, medical emergencies)"
     }
   ],
-  "language": "",
-  "finalMessage": ""
+  "language": "The name of the language the document is translated in",
+  "finalMessage": "A short, encouraging and authoritative safety warning statement by a civil safety officer."
 }
-
-Rules:
-Personalize every recommendation.
-Consider:
-- location
-- family composition
-- children
-- elderly
-- pregnant women
-- disabled people
-- pets
-- house type
-- transportation
-- preferred language
-
-Use practical advice.
-Never hallucinate unavailable weather data.
-If weather information is unavailable, clearly state assumptions.
-Return ONLY JSON.
+</json_schema>
 `;
 
   try {

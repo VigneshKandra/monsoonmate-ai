@@ -16,8 +16,9 @@ export const initialResponses: QuestionnaireResponses = {
 
 export const loadingMessages = [
   "Analyzing your location...",
-  "Building emergency checklist...",
-  "Preparing travel advisory...",
-  "Creating personalized recommendations...",
+  "Assessing monsoon risk...",
+  "Preparing emergency checklist...",
+  "Building travel advisory...",
+  "Generating personalized recommendations...",
   "Almost ready..."
 ];
