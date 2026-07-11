@@ -40,7 +40,7 @@ const getErrorDetails = (errMessage: string) => {
   if (errMessage.startsWith("Configuration Error")) {
     return { 
       title: "API Key Configuration Missing", 
-      message: "The application is missing a valid Gemini API Key. Please notify your administrator to configure NEXT_PUBLIC_GEMINI_API_KEY in the environment variable files." 
+      message: "The application is missing a valid Gemini API Key. Please notify your administrator to configure GEMINI_API_KEY in the environment variable files." 
     };
   }
   if (errMessage.startsWith("Connection Error") || errMessage.startsWith("Network Error")) {

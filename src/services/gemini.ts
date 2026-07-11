@@ -3,10 +3,10 @@ import { QuestionnaireResponses, PreparednessPlanResponse } from "@/types/planne
 
 export async function generatePreparednessPlan(userProfile: QuestionnaireResponses): Promise<PreparednessPlanResponse> {
   // 1. API Key Check
-  const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     throw new Error(
-      "Configuration Error: The Gemini API Key is missing. Please check that the NEXT_PUBLIC_GEMINI_API_KEY environment variable is configured correctly."
+      "Configuration Error: The Gemini API Key is missing. Please check that the GEMINI_API_KEY environment variable is configured correctly."
     );
   }
 
