@@ -1,182 +1,217 @@
 import { NextRequest, NextResponse } from "next/server";
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
 import { PreparednessPlanResponse, EmergencyContact } from "@/types/planner";
 import { buildPreparednessPrompt } from "@/prompts/preparednessPrompt";
 
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function isRecord(val: unknown): val is Record<string, unknown> {
+  return typeof val === "object" && val !== null;
+}
+
+/**
+ * Strips markdown code fences, BOM, invisible control chars, and any text
+ * outside the outermost JSON braces without corrupting valid JSON.
+ */
 function cleanJsonResponse(rawText: string): string {
   let cleaned = rawText.trim();
-  
+
+  // Remove UTF-8 BOM
+  if (cleaned.charCodeAt(0) === 0xfeff) {
+    cleaned = cleaned.substring(1);
+  }
+
   // Remove markdown code fences
-  if (cleaned.startsWith("```json")) {
-    cleaned = cleaned.substring(7);
-  } else if (cleaned.startsWith("```")) {
-    cleaned = cleaned.substring(3);
+  cleaned = cleaned.replace(/```json/g, "").replace(/```/g, "").trim();
+
+  // Extract content between the first '{' and the last '}'
+  const firstBrace = cleaned.indexOf("{");
+  const lastBrace = cleaned.lastIndexOf("}");
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    cleaned = cleaned.substring(firstBrace, lastBrace + 1);
   }
-  
-  if (cleaned.endsWith("```")) {
-    cleaned = cleaned.substring(0, cleaned.length - 3);
-  }
-  
+
+  // Remove invisible control characters (keep tabs \x09, newlines \x0A, carriage returns \x0D)
+  cleaned = cleaned.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g, "");
+
   return cleaned.trim();
 }
 
-function validateAndSanitizeResponse(raw: Record<string, unknown>): PreparednessPlanResponse {
-  const sanitized: Partial<PreparednessPlanResponse> = {};
+/**
+ * Attempts JSON.parse. On failure, tries lightweight auto-repair
+ * (trailing commas). On second failure, re-throws with full diagnostics.
+ */
+function safeParseJson(rawText: string): Record<string, unknown> {
+  const cleaned = cleanJsonResponse(rawText);
 
-  // 1. Strings Validation
-  sanitized.riskLevel = typeof raw.riskLevel === "string" && raw.riskLevel.trim() 
-    ? raw.riskLevel.trim() 
-    : "Low";
-  
-  sanitized.riskSummary = typeof raw.riskSummary === "string" && raw.riskSummary.trim()
-    ? raw.riskSummary.trim()
-    : "No detailed meteorological risk summary could be compiled for this profile.";
-
-  sanitized.language = typeof raw.language === "string" && raw.language.trim()
-    ? raw.language.trim()
-    : "English";
-
-  sanitized.finalMessage = typeof raw.finalMessage === "string" && raw.finalMessage.trim()
-    ? raw.finalMessage.trim()
-    : "Please prioritize safety, stay informed of local reports, and follow civil warning procedures.";
-
-  // 2. Preparedness Plan Timeline
-  const rawPlan = (raw.preparednessPlan && typeof raw.preparednessPlan === "object"
-    ? raw.preparednessPlan
-    : {}) as Record<string, unknown>;
-
-  sanitized.preparednessPlan = {
-    today: Array.isArray(rawPlan.today) ? rawPlan.today.filter((i): i is string => typeof i === "string") : [],
-    tomorrow: Array.isArray(rawPlan.tomorrow) ? rawPlan.tomorrow.filter((i): i is string => typeof i === "string") : [],
-    duringRain: Array.isArray(rawPlan.duringRain) ? rawPlan.duringRain.filter((i): i is string => typeof i === "string") : [],
-    afterRain: Array.isArray(rawPlan.afterRain) ? rawPlan.afterRain.filter((i): i is string => typeof i === "string") : []
-  };
-
-  if (sanitized.preparednessPlan.today.length === 0) {
-    sanitized.preparednessPlan.today = ["Monitor local municipal alerts and emergency announcements."];
-  }
-  if (sanitized.preparednessPlan.tomorrow.length === 0) {
-    sanitized.preparednessPlan.tomorrow = ["Conduct structural checks around your immediate premises."];
-  }
-  if (sanitized.preparednessPlan.duringRain.length === 0) {
-    sanitized.preparednessPlan.duringRain = ["Stay indoors and keep electronic appliances disconnected."];
-  }
-  if (sanitized.preparednessPlan.afterRain.length === 0) {
-    sanitized.preparednessPlan.afterRain = ["Check property structures for leakage or water stagnation."];
+  // Attempt 1: direct parse
+  try {
+    console.log("[parse] JSON parsing start");
+    const parsed = JSON.parse(cleaned);
+    console.log("[parse] JSON parsing success");
+    if (isRecord(parsed)) return parsed;
+    throw new Error("Parsed value is not a JSON object");
+  } catch (firstError) {
+    console.warn("[parse] Initial parse failed, attempting auto-repair…", firstError);
   }
 
-  // 3. Simple Arrays
-  sanitized.emergencyChecklist = Array.isArray(raw.emergencyChecklist)
-    ? raw.emergencyChecklist.filter((i): i is string => typeof i === "string")
-    : [];
-  if (sanitized.emergencyChecklist.length === 0) {
-    sanitized.emergencyChecklist = [
-      "Secure windows and balconies against strong wind vectors.",
-      "Verify emergency backup power bank levels.",
-      "Confirm emergency transit pathways are clear."
-    ];
+  // Attempt 2: remove trailing commas before ] or }
+  const repaired = cleaned.replace(/,(\s*[\]}])/g, "$1");
+  try {
+    const parsed = JSON.parse(repaired);
+    console.log("[parse] JSON parsing success after trailing-comma repair");
+    if (isRecord(parsed)) return parsed;
+    throw new Error("Repaired value is not a JSON object");
+  } catch (secondError) {
+    console.error("[parse] JSON parsing failure — all repairs exhausted");
+    console.error("[parse] Cleaned text:", cleaned);
+    console.error("[parse] Repaired text:", repaired);
+    throw secondError;
   }
-
-  sanitized.emergencyKit = Array.isArray(raw.emergencyKit)
-    ? raw.emergencyKit.filter((i): i is string => typeof i === "string")
-    : [];
-  if (sanitized.emergencyKit.length === 0) {
-    sanitized.emergencyKit = [
-      "Dry food rations and sealed drinking water",
-      "First aid medical kit with custom prescriptions",
-      "Flashlight with spare batteries",
-      "Emergency power bank for mobile connectivity"
-    ];
-  }
-
-  sanitized.communityRecommendations = Array.isArray(raw.communityRecommendations)
-    ? raw.communityRecommendations.filter((i): i is string => typeof i === "string")
-    : [];
-  if (sanitized.communityRecommendations.length === 0) {
-    sanitized.communityRecommendations = [
-      "Share emergency cell numbers with immediate neighbors.",
-      "Check drainage inlets around property perimeters."
-    ];
-  }
-
-  // 4. Travel Advisory Object
-  const rawTravel = (raw.travelAdvisory && typeof raw.travelAdvisory === "object"
-    ? raw.travelAdvisory
-    : {}) as Record<string, unknown>;
-
-  sanitized.travelAdvisory = {
-    status: typeof rawTravel.status === "string" && rawTravel.status.trim()
-      ? rawTravel.status.trim()
-      : "Advisory",
-    recommendation: typeof rawTravel.recommendation === "string" && rawTravel.recommendation.trim()
-      ? rawTravel.recommendation.trim()
-      : "Exercise caution during high rainfall spells.",
-    avoid: Array.isArray(rawTravel.avoid) ? rawTravel.avoid.filter((i): i is string => typeof i === "string") : [],
-    safeOptions: Array.isArray(rawTravel.safeOptions) ? rawTravel.safeOptions.filter((i): i is string => typeof i === "string") : []
-  };
-
-  if (sanitized.travelAdvisory.avoid.length === 0) {
-    sanitized.travelAdvisory.avoid = ["Underpasses, low-lying storm channels, and waterlogged segments."];
-  }
-  if (sanitized.travelAdvisory.safeOptions.length === 0) {
-    sanitized.travelAdvisory.safeOptions = ["Stay indoors or use municipal transit lines tracking applications."];
-  }
-
-  // 5. Safety Tips Object
-  const rawTips = (raw.safetyTips && typeof raw.safetyTips === "object"
-    ? raw.safetyTips
-    : {}) as Record<string, unknown>;
-
-  sanitized.safetyTips = {
-    before: Array.isArray(rawTips.before) ? rawTips.before.filter((i): i is string => typeof i === "string") : [],
-    during: Array.isArray(rawTips.during) ? rawTips.during.filter((i): i is string => typeof i === "string") : [],
-    after: Array.isArray(rawTips.after) ? rawTips.after.filter((i): i is string => typeof i === "string") : []
-  };
-
-  if (sanitized.safetyTips.before.length === 0) {
-    sanitized.safetyTips.before = ["Audit roof leaks and check gutter blockages."];
-  }
-  if (sanitized.safetyTips.during.length === 0) {
-    sanitized.safetyTips.during = ["Avoid touching metal railings or water logging fields."];
-  }
-  if (sanitized.safetyTips.after.length === 0) {
-    sanitized.safetyTips.after = ["Prevent mosquito breeding sites by clearing stagnating pools."];
-  }
-
-  // 6. Emergency Contacts Array
-  const rawContacts = raw.emergencyContacts;
-  const contactsList: EmergencyContact[] = [];
-  if (Array.isArray(rawContacts)) {
-    rawContacts.forEach((contact) => {
-      if (contact && typeof contact === "object") {
-        const c = contact as Record<string, unknown>;
-        if (typeof c.name === "string" && typeof c.reason === "string") {
-          contactsList.push({
-            name: c.name.trim(),
-            reason: c.reason.trim()
-          });
-        }
-      }
-    });
-  }
-  
-  if (contactsList.length === 0) {
-    sanitized.emergencyContacts = [
-      { name: "National Emergency Number", reason: "General emergency alerts (Dial 112)" },
-      { name: "Municipal Disaster Control", reason: "Waterlogging or rescue support updates" }
-    ];
-  } else {
-    sanitized.emergencyContacts = contactsList;
-  }
-
-  return sanitized as PreparednessPlanResponse;
 }
 
+// ---------------------------------------------------------------------------
+// Response validation & default-filling
+// ---------------------------------------------------------------------------
+
+function validateAndSanitize(raw: Record<string, unknown>): PreparednessPlanResponse {
+  const str = (key: string, fallback: string): string => {
+    const v = raw[key];
+    return typeof v === "string" && v.trim() ? v.trim() : fallback;
+  };
+
+  const strArr = (src: unknown): string[] =>
+    Array.isArray(src) ? src.filter((i): i is string => typeof i === "string") : [];
+
+  const objField = (key: string): Record<string, unknown> => {
+    const v = raw[key];
+    return v && typeof v === "object" ? (v as Record<string, unknown>) : {};
+  };
+
+  // --- Strings ---
+  const riskLevel = str("riskLevel", "Moderate");
+  const riskSummary = str("riskSummary", "Standard monsoon risk assessment for your region.");
+  const language = str("language", "English");
+  const finalMessage = str("finalMessage", "Prioritize safety, stay informed of local reports, and follow civil warning procedures.");
+
+  // --- Preparedness Plan ---
+  const rawPlan = objField("preparednessPlan");
+  const preparednessPlan = {
+    today: strArr(rawPlan.today),
+    tomorrow: strArr(rawPlan.tomorrow),
+    duringRain: strArr(rawPlan.duringRain),
+    afterRain: strArr(rawPlan.afterRain),
+  };
+  if (preparednessPlan.today.length === 0) preparednessPlan.today = ["Monitor local municipal alerts and emergency announcements."];
+  if (preparednessPlan.tomorrow.length === 0) preparednessPlan.tomorrow = ["Conduct structural checks around your immediate premises."];
+  if (preparednessPlan.duringRain.length === 0) preparednessPlan.duringRain = ["Stay indoors and keep electronic appliances disconnected."];
+  if (preparednessPlan.afterRain.length === 0) preparednessPlan.afterRain = ["Check property structures for leakage or water stagnation."];
+
+  // --- Simple arrays ---
+  let emergencyChecklist = strArr(raw.emergencyChecklist);
+  if (emergencyChecklist.length === 0) emergencyChecklist = ["Secure windows and balconies.", "Verify emergency backup power.", "Confirm transit pathways are clear."];
+
+  let emergencyKit = strArr(raw.emergencyKit);
+  if (emergencyKit.length === 0) emergencyKit = ["Dry food and sealed water", "First aid kit", "Flashlight with batteries", "Emergency power bank"];
+
+  let communityRecommendations = strArr(raw.communityRecommendations);
+  if (communityRecommendations.length === 0) communityRecommendations = ["Share emergency numbers with neighbors.", "Check drainage around property."];
+
+  // --- Travel Advisory ---
+  const rawTravel = objField("travelAdvisory");
+  const travelAdvisory = {
+    status: typeof rawTravel.status === "string" && rawTravel.status.trim() ? rawTravel.status.trim() : "Advisory",
+    recommendation: typeof rawTravel.recommendation === "string" && rawTravel.recommendation.trim() ? rawTravel.recommendation.trim() : "Exercise caution during heavy rainfall.",
+    avoid: strArr(rawTravel.avoid),
+    safeOptions: strArr(rawTravel.safeOptions),
+  };
+  if (travelAdvisory.avoid.length === 0) travelAdvisory.avoid = ["Underpasses and waterlogged roads."];
+  if (travelAdvisory.safeOptions.length === 0) travelAdvisory.safeOptions = ["Stay indoors or use municipal transit."];
+
+  // --- Safety Tips ---
+  const rawTips = objField("safetyTips");
+  const safetyTips = {
+    before: strArr(rawTips.before),
+    during: strArr(rawTips.during),
+    after: strArr(rawTips.after),
+  };
+  if (safetyTips.before.length === 0) safetyTips.before = ["Audit roof leaks and gutter blockages."];
+  if (safetyTips.during.length === 0) safetyTips.during = ["Stay away from metal railings and waterlogged areas."];
+  if (safetyTips.after.length === 0) safetyTips.after = ["Clear stagnant water to prevent mosquito breeding."];
+
+  // --- Emergency Contacts ---
+  const contacts: EmergencyContact[] = [];
+  if (Array.isArray(raw.emergencyContacts)) {
+    for (const c of raw.emergencyContacts) {
+      if (isRecord(c) && typeof c.name === "string" && typeof c.reason === "string") {
+        contacts.push({ name: c.name.trim(), reason: c.reason.trim() });
+      }
+    }
+  }
+  const emergencyContacts = contacts.length > 0
+    ? contacts
+    : [{ name: "National Emergency Number", reason: "Dial 112 for emergencies" }];
+
+  return {
+    riskLevel,
+    riskSummary,
+    preparednessPlan,
+    emergencyChecklist,
+    emergencyKit,
+    travelAdvisory,
+    safetyTips,
+    communityRecommendations,
+    emergencyContacts,
+    language,
+    finalMessage,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Error classifier
+// ---------------------------------------------------------------------------
+
+function classifyError(message: string): { code: string; status: number; userMessage: string } {
+  if (message.includes("Timeout Error")) {
+    return { code: "REQUEST_TIMEOUT", status: 504, userMessage: "Timeout Error: The safety plan generation request timed out. Please retry." };
+  }
+  if (message.includes("API key not valid") || message.includes("API_KEY_INVALID") || message.includes("API key expired")) {
+    return { code: "API_KEY_INVALID", status: 401, userMessage: "Configuration Error: Invalid API credentials on the server." };
+  }
+  if (message.includes("quota") || message.includes("RESOURCE_EXHAUSTED") || message.includes("429")) {
+    return { code: "QUOTA_EXCEEDED", status: 429, userMessage: "Service limit exceeded. Please wait a minute and retry." };
+  }
+  if (message.includes("model") && (message.includes("not found") || message.includes("not available"))) {
+    return { code: "MODEL_UNAVAILABLE", status: 503, userMessage: "The AI model is temporarily unavailable. Please retry." };
+  }
+  if (message.includes("overloaded") || message.includes("503")) {
+    return { code: "MODEL_UNAVAILABLE", status: 503, userMessage: "The AI model is temporarily overloaded. Please retry." };
+  }
+  if (message.includes("fetch failed") || message.includes("Failed to fetch") || message.includes("network") || message.includes("ECONNREFUSED")) {
+    return { code: "NETWORK_FAILURE", status: 502, userMessage: "Connection Error: Network failure while connecting to AI services." };
+  }
+  if (message === "EMPTY_RESPONSE") {
+    return { code: "EMPTY_RESPONSE", status: 502, userMessage: "Empty Response: The AI returned an empty response. Please retry." };
+  }
+  if (message.includes("JSON") || message.includes("parse") || message.includes("Unexpected")) {
+    return { code: "MALFORMED_JSON", status: 502, userMessage: "Parsing Error: The response format was invalid. Please retry." };
+  }
+  return { code: "SERVER_ERROR", status: 500, userMessage: "An unexpected server error occurred. Please try again." };
+}
+
+// ---------------------------------------------------------------------------
+// Route handler
+// ---------------------------------------------------------------------------
+
 export async function POST(req: NextRequest) {
+  console.log("[route] Request received");
+
   try {
     const body = await req.json();
     const { userProfile } = body || {};
-    
+
     if (!userProfile) {
       return NextResponse.json(
         { success: false, message: "Missing userProfile in request body", code: "BAD_REQUEST" },
@@ -187,132 +222,119 @@ export async function POST(req: NextRequest) {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
       return NextResponse.json(
-        {
-          success: false,
-          message: "Configuration Error: The GEMINI_API_KEY is missing on the server. Please check your environments.",
-          code: "CONFIG_ERROR"
-        },
+        { success: false, message: "Configuration Error: The GEMINI_API_KEY is missing on the server.", code: "CONFIG_ERROR" },
         { status: 500 }
       );
     }
 
-    const modelName = process.env.GEMINI_MODEL || "gemini-3.5-flash";
-    const ai = new GoogleGenAI({ apiKey });
+    const modelName = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+    console.log(`[route] Model: ${modelName}`);
 
+    const ai = new GoogleGenAI({ apiKey });
     const prompt = buildPreparednessPrompt(userProfile);
+    console.log(`[route] Prompt length: ${prompt.length} chars`);
 
     // 60-second timeout
-    const timeoutDuration = 60000;
     const timeoutPromise = new Promise<never>((_, reject) =>
-      setTimeout(
-        () => reject(new Error("Timeout Error: The request to Gemini API exceeded the 60-second response limit.")),
-        timeoutDuration
-      )
+      setTimeout(() => reject(new Error("Timeout Error: Gemini API exceeded the 60-second limit.")), 60000)
     );
 
-    console.log("Generating preparedness plan...");
-    console.time("Gemini Request");
+    console.log("[route] Start Gemini request");
+    console.time("[route] Gemini Request");
 
     const apiCallPromise = ai.models.generateContent({
       model: modelName,
       contents: prompt,
       config: {
         responseMimeType: "application/json",
-        temperature: 0.2,
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            riskLevel: { type: Type.STRING },
+            riskSummary: { type: Type.STRING },
+            preparednessPlan: {
+              type: Type.OBJECT,
+              properties: {
+                today: { type: Type.ARRAY, items: { type: Type.STRING } },
+                tomorrow: { type: Type.ARRAY, items: { type: Type.STRING } },
+                duringRain: { type: Type.ARRAY, items: { type: Type.STRING } },
+                afterRain: { type: Type.ARRAY, items: { type: Type.STRING } },
+              },
+              required: ["today", "tomorrow", "duringRain", "afterRain"],
+            },
+            emergencyChecklist: { type: Type.ARRAY, items: { type: Type.STRING } },
+            emergencyKit: { type: Type.ARRAY, items: { type: Type.STRING } },
+            travelAdvisory: {
+              type: Type.OBJECT,
+              properties: {
+                status: { type: Type.STRING },
+                recommendation: { type: Type.STRING },
+                avoid: { type: Type.ARRAY, items: { type: Type.STRING } },
+                safeOptions: { type: Type.ARRAY, items: { type: Type.STRING } },
+              },
+              required: ["status", "recommendation", "avoid", "safeOptions"],
+            },
+            safetyTips: {
+              type: Type.OBJECT,
+              properties: {
+                before: { type: Type.ARRAY, items: { type: Type.STRING } },
+                during: { type: Type.ARRAY, items: { type: Type.STRING } },
+                after: { type: Type.ARRAY, items: { type: Type.STRING } },
+              },
+              required: ["before", "during", "after"],
+            },
+            communityRecommendations: { type: Type.ARRAY, items: { type: Type.STRING } },
+            emergencyContacts: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  name: { type: Type.STRING },
+                  reason: { type: Type.STRING },
+                },
+                required: ["name", "reason"],
+              },
+            },
+            language: { type: Type.STRING },
+            finalMessage: { type: Type.STRING },
+          },
+          required: [
+            "riskLevel", "riskSummary", "preparednessPlan",
+            "emergencyChecklist", "emergencyKit", "travelAdvisory",
+            "safetyTips", "communityRecommendations", "emergencyContacts",
+            "language", "finalMessage",
+          ],
+        },
+        temperature: 0.1,
+        topP: 0.8,
         maxOutputTokens: 2048,
       },
     });
 
     const response = await Promise.race([apiCallPromise, timeoutPromise]);
-    
-    console.log("========== GEMINI RESPONSE ==========");
-    console.timeEnd("Gemini Request");
-    console.log("Gemini response received.");
-    
-    const text = response.text || "";
-    console.log("RAW RESPONSE");
-    console.log(text);
+
+    console.timeEnd("[route] Gemini Request");
+    console.log("[route] End Gemini request");
+
+    // Extract text — response.text is a getter (string | undefined)
+    const text = response.text ?? "";
+
+    console.log("[route] Raw Gemini response:", text.substring(0, 500));
 
     if (!text.trim()) {
-      return NextResponse.json(
-        { success: false, message: "Empty Response: The AI response returned empty.", code: "EMPTY_RESPONSE" },
-        { status: 502 }
-      );
+      throw new Error("EMPTY_RESPONSE");
     }
 
-    const cleaned = cleanJsonResponse(text);
+    const parsed = safeParseJson(text);
+    const plan = validateAndSanitize(parsed);
 
-    console.log("========== CLEANED RESPONSE ==========");
-    console.log(cleaned);
-
-    try {
-      const rawParsed = JSON.parse(cleaned) as Record<string, unknown>;
-      const sanitizedPlan = validateAndSanitizeResponse(rawParsed);
-      
-      return NextResponse.json({
-        success: true,
-        plan: sanitizedPlan
-      });
-    } catch (parseError) {
-      console.error("JSON PARSE FAILED", parseError);
-      console.error(cleaned);
-
-      return NextResponse.json({
-        success: false,
-        message: "JSON_PARSE_ERROR: Received an invalid format from the server.",
-        code: "MALFORMED_JSON",
-        raw: cleaned
-      }, { status: 502 });
-    }
+    console.log("[route] Returned response");
+    return NextResponse.json({ success: true, plan });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error("API ROUTE FAULT:", message);
+    console.error("[route] Pipeline error:", message);
 
-    let code = "SERVER_ERROR";
-    let status = 500;
-    let userMessage = "An unexpected server error occurred. Please try again.";
-
-    if (message.includes("Timeout Error")) {
-      code = "REQUEST_TIMEOUT";
-      status = 504;
-      userMessage = "The safety plan generation request timed out. Please check your connection speed and retry.";
-    } else if (
-      message.includes("API key not valid") || 
-      message.includes("API_KEY_INVALID") || 
-      message.includes("API key expired") || 
-      message.includes("401")
-    ) {
-      code = "API_KEY_INVALID";
-      status = 401;
-      userMessage = "Invalid configuration credentials. The server key could not be authenticated.";
-    } else if (
-      message.includes("quota") || 
-      message.includes("RESOURCE_EXHAUSTED") || 
-      message.includes("limit") || 
-      message.includes("429")
-    ) {
-      code = "QUOTA_EXCEEDED";
-      status = 429;
-      userMessage = "Service limit exceeded. MonsoonMate is experiencing high volume. Please wait a minute and retry.";
-    } else if (
-      message.includes("model not found") || 
-      message.includes("not available") || 
-      message.includes("503") || 
-      message.includes("overloaded")
-    ) {
-      code = "MODEL_UNAVAILABLE";
-      status = 503;
-      userMessage = "The AI compilation model is temporarily overloaded or unavailable. Please click retry.";
-    } else if (
-      message.includes("fetch failed") || 
-      message.includes("Failed to fetch") || 
-      message.includes("network") || 
-      message.includes("connect")
-    ) {
-      code = "NETWORK_FAILURE";
-      status = 500;
-      userMessage = "Network failure while connecting to AI services. Please verify your connection and try again.";
-    }
+    const { code, status, userMessage } = classifyError(message);
 
     return NextResponse.json(
       { success: false, message: userMessage, code },
