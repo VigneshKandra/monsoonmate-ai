@@ -53,7 +53,7 @@ MonsoonMate AI addresses these vulnerabilities by offering:
                |                                    v            |
                |                           +------------------+  |
                |                           |  Google Gemini   |  |
-               |                           |  2.5-Flash model |  |
+               |                           |  3.5-Flash model |  |
                |                           +------------------+  |
                |                                                 |
                +-------------------------------------------------+
